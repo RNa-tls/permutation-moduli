@@ -85,7 +85,7 @@ const MONSTER_DEFS = {
   wraith:  { name: "망령",         hp: 14, atk: 6,  def: 1, xp: 14, speed: 1,   minD: 5,  maxD: 10, ai: "wraith",  color: "#a8d8ff", drain: true },
   golem:   { name: "골렘",         hp: 30, atk: 9,  def: 3, xp: 22, speed: 0.5, minD: 5,  maxD: 10, ai: "chase",   color: "#c0a878" },
   demon:   { name: "악마",         hp: 22, atk: 8,  def: 2, xp: 18, speed: 1,   minD: 7,  maxD: 10, ai: "chase",   color: "#ff5c5c" },
-  boss:    { name: "심장의 수호자", hp: 80, atk: 12, def: 4, xp: 50, speed: 0.5, minD: 99, maxD: 99, ai: "chase",   color: "#ffc83c", boss: true },
+  boss:    { name: "심장의 수호자", hp: 80, atk: 12, def: 4, xp: 50, speed: 1,   minD: 99, maxD: 99, ai: "chase",   color: "#ffc83c", boss: true },
 };
 
 const WEAPONS = [
@@ -283,7 +283,7 @@ const PIX = {
     "kpk......kpk",
     "kppk.kk.kppk",
     ".kppkppkppk.",
-    ".kpppppppppk" .slice(0,12),
+    ".kppppppppk.",
     "..kppppppk..",
     "..kpkeekpk..",
     "...k.kk.k...",
@@ -297,10 +297,10 @@ const PIX = {
     "....kkkk....",
     "...kllllk...",
     "..klgggglk..",
-    ".kgggggggg k".slice(0,12),
+    ".kggggggggk.",
     ".kgeggggegk.",
     ".kggggggggk.",
-    "..kgggggg k.".slice(0,12),
+    "..kggggggk..",
     "...kkkkkk...",
     "............",
   ]},
@@ -337,7 +337,7 @@ const PIX = {
     "....kkkk....",
     "..kkooookk..",
     ".koowooorok.",
-    "kooooooooook".slice(0,12),
+    "kooooooooook",
     ".kroooowook.",
     ".kkkkkkkkkk.",
     "...kssssk...",
@@ -349,12 +349,12 @@ const PIX = {
   wraith: { pal: { k:"#05060c", p:"#a8d8ff", d:"#5a7aaa", e:"#eaffff" }, grid: [
     "....kkkk....",
     "...kppppk...",
-    "..kpppppp k.".slice(0,12),
+    "..kppppppk..",
     ".kpkekkepk..",
     ".kpppppppk..",
     ".kpdpppdpk..",
     "..kpppppk...",
-    "..kpppppp k.".slice(0,12),
+    "..kppppppk..",
     "...kpppk....",
     "....kppk....",
     ".....kk.....",
@@ -398,7 +398,7 @@ const PIX = {
     "kggkrrrrkggk",
     ".kggggggggk.",
     ".kggkddkggk.",
-    "..kgggggg k.".slice(0,12),
+    "..kggggggk..",
     "..kgk..kgk..",
     "...k....k...",
   ]},
@@ -424,7 +424,7 @@ const PIX = {
     ".kpSSppSSpk.",
     ".kppSSSSppk.",
     ".kpSSppSSpk.",
-    ".kpppppppp k".slice(0,12),
+    ".kppppppppk.",
     ".kdppppppdk.",
     "..kkkkkkkk..",
     "............",
@@ -462,8 +462,8 @@ const PIX = {
     "............",
     "..kkk..kkk..",
     ".khhhkkhhhk.",
-    "khwwhhhhhdhk".slice(0,12),
-    "khwhhhhhhdhk".slice(0,12),
+    "khwwhhhhhdhk",
+    "khwhhhhhhdhk",
     "khhhhhhhhdk.",
     ".khhhhhhhk..",
     "..khhhhhk...",
@@ -582,7 +582,7 @@ function makeMonster(typeId, depth, x, y) {
     hp: s.hp, maxhp: s.hp, atk: s.atk, def: s.def, xp: s.xp,
     speed: def.speed, range: def.range || 0, boom: s.boom,
     poisonChance: def.poison || 0, drain: !!def.drain, boss: !!def.boss,
-    awake: false, armed: false, slowSkip: false,
+    awake: false, armed: false, slowSkip: false, cool: 0,
     flash: 0, lunge: null,
   };
 }
@@ -1056,9 +1056,8 @@ function monstersAct() {
     if (G.state !== "play") break;              // 플레이어 사망 시 중단
     if (!G.monsters.includes(m) || m.hp <= 0) continue;
     if (!m.awake) {
-      const dist = Math.abs(m.x - p.x) + Math.abs(m.y - p.y);
-      const aggro = m.ai === "ranged" ? 11 : 9;
-      if (G.visible[idx(m.x, m.y)] && dist <= aggro) {
+      // 플레이어 시야에 들어온 몬스터는 깨어난다 (서로 마주친 것)
+      if (G.visible[idx(m.x, m.y)]) {
         m.awake = true;
         if (m.boss) msg("심장의 수호자가 눈을 떴다!", "#ffc83c");
       } else continue;
@@ -1082,15 +1081,19 @@ function monsterAct(m) {
       if (chance(0.5)) return stepRandom(m);
       return stepDownhill(m);
     case "ranged": {
-      if (adjacent4(m.x, m.y, p.x, p.y)) return monsterMelee(m);
+      // 인접하면 도망(가끔 반격) — 영원히 못 잡는 카이팅은 금지, 대신 사거리 안 LOS면 무조건 사격
+      if (adjacent4(m.x, m.y, p.x, p.y)) {
+        if (chance(0.35)) return monsterMelee(m);
+        return stepUphill(m);
+      }
+      if (m.cool > 0) { m.cool = 0; return stepDownhill(m); } // 재장전하며 이동
       const eu = Math.hypot(m.x - p.x, m.y - p.y);
-      const los = hasLOS(m.x, m.y, p.x, p.y);
-      if (eu <= 2.2 && los) return stepUphill(m);            // 카이팅
-      if (eu <= m.range && los) {                            // 사격
+      if (eu <= m.range && hasLOS(m.x, m.y, p.x, p.y)) {
         addProjectile(m.x, m.y, p.x, p.y, "#e8e4d8", "bolt");
         m.lunge = { dx: Math.sign(p.x - m.x), dy: Math.sign(p.y - m.y), t: 0 };
         sfx.shoot();
         damagePlayer(m.atk, m);
+        m.cool = 1;
         return;
       }
       return stepDownhill(m);
@@ -1311,7 +1314,10 @@ function handleKey(e) {
   initAudio(); resumeAudio();
 
   if (G.state === "title") {
-    if (code !== "F5" && code !== "F12") { e.preventDefault(); startRun(); }
+    // 새로고침/개발도구/단독 모디파이어 키는 시작 트리거에서 제외
+    if (code.startsWith("F") && code.length <= 3) return;
+    if (/^(Shift|Control|Alt|Meta)/.test(code)) return;
+    e.preventDefault(); startRun();
     return;
   }
   if (G.state === "dead" || G.state === "win") {
@@ -1325,11 +1331,14 @@ function handleKey(e) {
     const n = G.player.inv.length;
     if (code === "ArrowUp" || code === "KeyW") G.invSel = n ? (G.invSel - 1 + n) % n : 0;
     else if (code === "ArrowDown" || code === "KeyS") G.invSel = n ? (G.invSel + 1) % n : 0;
-    else if (code === "Enter" || code === "Space") {
+    else if ((code === "Enter" || code === "Space") && !e.repeat) {
       if (useInvItem(G.invSel)) { closeInv(); endPlayerTurn(); }
       G.invSel = Math.min(G.invSel, Math.max(0, G.player.inv.length - 1));
     }
-    else if (code === "KeyD") { dropInvItem(G.invSel); G.invSel = Math.min(G.invSel, Math.max(0, G.player.inv.length - 1)); }
+    else if (code === "KeyD" && !e.repeat) { // 이동키 D 홀드 반복이 버리기로 새지 않게
+      dropInvItem(G.invSel);
+      G.invSel = Math.min(G.invSel, Math.max(0, G.player.inv.length - 1));
+    }
     else if (code === "Escape" || code === "KeyI") closeInv();
     return;
   }
@@ -1342,11 +1351,11 @@ function handleKey(e) {
     return;
   }
   switch (code) {
-    case "Space":  e.preventDefault(); waitTurn(); break;
-    case "KeyG":   e.preventDefault(); pickUp(); break;
-    case "KeyE":   e.preventDefault(); descend(); break;
-    case "KeyI":   e.preventDefault(); openInv(); break;
-    case "KeyM":   e.preventDefault(); muted = !muted; msg(muted ? "사운드 끔" : "사운드 켬", "#5a6478"); break;
+    case "Space":  e.preventDefault(); waitTurn(); break; // 홀드 = 휴식
+    case "KeyG":   e.preventDefault(); if (!e.repeat) pickUp(); break;
+    case "KeyE":   e.preventDefault(); if (!e.repeat) descend(); break;
+    case "KeyI":   e.preventDefault(); if (!e.repeat) openInv(); break;
+    case "KeyM":   e.preventDefault(); if (!e.repeat) { muted = !muted; msg(muted ? "사운드 끔" : "사운드 켬", "#5a6478"); } break;
   }
 }
 
